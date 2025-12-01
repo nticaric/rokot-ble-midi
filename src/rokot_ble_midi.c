@@ -26,16 +26,20 @@ static struct
 {
   hci_con_handle_t con_handle;
   bool notifications_enabled;
+  bool battery_notifications_enabled;
   uint16_t connection_interval; // in 1.25ms units
   rokot_ble_midi_callback_t rx_callback;
   btstack_packet_callback_registration_t hci_event_callback_registration;
   char device_name[32];
+  uint8_t battery_level;
   bool initialized;
 } ble_midi_state = {
     .con_handle = HCI_CON_HANDLE_INVALID,
     .notifications_enabled = false,
+    .battery_notifications_enabled = false,
     .connection_interval = 0,
     .rx_callback = NULL,
+    .battery_level = 100,
     .initialized = false,
 };
 
@@ -141,9 +145,12 @@ static uint16_t att_read_callback(hci_con_handle_t connection_handle,
                                   uint16_t buffer_size)
 {
   UNUSED(connection_handle);
-  UNUSED(offset);
-  UNUSED(buffer);
-  UNUSED(buffer_size);
+
+  // Battery Level characteristic read
+  if (att_handle == ATT_CHARACTERISTIC_ORG_BLUETOOTH_CHARACTERISTIC_BATTERY_LEVEL_01_VALUE_HANDLE)
+  {
+    return att_read_callback_handle_byte(ble_midi_state.battery_level, offset, buffer, buffer_size);
+  }
 
   // BLE-MIDI characteristic read returns zero-length value
   if (att_handle == ATT_CHARACTERISTIC_7772E5DB_3868_4112_A1A9_F2669D106BF3_01_VALUE_HANDLE)
@@ -163,7 +170,16 @@ static int att_write_callback(hci_con_handle_t connection_handle,
   UNUSED(transaction_mode);
   UNUSED(offset);
 
-  // Handle CCCD write (enable/disable notifications)
+  // Handle Battery CCCD write (enable/disable notifications)
+  if (att_handle == ATT_CHARACTERISTIC_ORG_BLUETOOTH_CHARACTERISTIC_BATTERY_LEVEL_01_CLIENT_CONFIGURATION_HANDLE)
+  {
+    ble_midi_state.battery_notifications_enabled =
+        (little_endian_read_16(buffer, 0) == GATT_CLIENT_CHARACTERISTICS_CONFIGURATION_NOTIFICATION);
+    ble_midi_state.con_handle = connection_handle;
+    return 0;
+  }
+
+  // Handle MIDI CCCD write (enable/disable notifications)
   if (att_handle == ATT_CHARACTERISTIC_7772E5DB_3868_4112_A1A9_F2669D106BF3_01_CLIENT_CONFIGURATION_HANDLE)
   {
     ble_midi_state.notifications_enabled =
@@ -249,6 +265,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
   case HCI_EVENT_DISCONNECTION_COMPLETE:
     ble_midi_state.con_handle = HCI_CON_HANDLE_INVALID;
     ble_midi_state.notifications_enabled = false;
+    ble_midi_state.battery_notifications_enabled = false;
     ble_midi_state.connection_interval = 0;
 
     // Re-enable advertising
@@ -309,6 +326,7 @@ void rokot_ble_midi_deinit(void)
   ble_midi_state.initialized = false;
   ble_midi_state.con_handle = HCI_CON_HANDLE_INVALID;
   ble_midi_state.notifications_enabled = false;
+  ble_midi_state.battery_notifications_enabled = false;
 }
 
 void rokot_ble_midi_task(void)
@@ -349,6 +367,39 @@ float rokot_ble_midi_get_connection_interval(void)
 {
   return ble_midi_state.connection_interval * 1.25f;
 }
+
+// ---------------------------------------------------------------------------
+// Battery API
+// ---------------------------------------------------------------------------
+
+void rokot_ble_midi_set_battery_level(uint8_t level)
+{
+  if (level > 100)
+    level = 100;
+
+  ble_midi_state.battery_level = level;
+
+  // Send notification if enabled
+  if (ble_midi_state.battery_notifications_enabled &&
+      ble_midi_state.con_handle != HCI_CON_HANDLE_INVALID)
+  {
+    if (att_server_can_send_packet_now(ble_midi_state.con_handle))
+    {
+      att_server_notify(ble_midi_state.con_handle,
+                        ATT_CHARACTERISTIC_ORG_BLUETOOTH_CHARACTERISTIC_BATTERY_LEVEL_01_VALUE_HANDLE,
+                        &level, 1);
+    }
+  }
+}
+
+uint8_t rokot_ble_midi_get_battery_level(void)
+{
+  return ble_midi_state.battery_level;
+}
+
+// ---------------------------------------------------------------------------
+// MIDI API
+// ---------------------------------------------------------------------------
 
 int rokot_ble_midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity)
 {

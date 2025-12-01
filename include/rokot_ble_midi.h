@@ -137,6 +137,26 @@ extern "C"
   float rokot_ble_midi_get_connection_interval(void);
 
   // ---------------------------------------------------------------------------
+  // Battery Service
+  // ---------------------------------------------------------------------------
+
+  /**
+   * @brief Set the battery level (0-100%)
+   *
+   * This updates the Battery Level characteristic. If a device is connected
+   * and has enabled notifications, it will be notified of the change.
+   *
+   * @param level Battery level percentage (0-100)
+   */
+  void rokot_ble_midi_set_battery_level(uint8_t level);
+
+  /**
+   * @brief Get the current battery level
+   * @return Battery level percentage (0-100)
+   */
+  uint8_t rokot_ble_midi_get_battery_level(void);
+
+  // ---------------------------------------------------------------------------
   // Sending MIDI Messages
   // ---------------------------------------------------------------------------
 
