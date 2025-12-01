@@ -10,6 +10,9 @@
 #define ENABLE_LE_PERIPHERAL
 #define ENABLE_LE_SECURE_CONNECTIONS
 
+// Required for HCI dump (even if not used, the SDK links it)
+#define ENABLE_PRINTF_HEXDUMP
+
 // BTstack configuration - buffers and sizes
 #define HCI_OUTGOING_PRE_BUFFER_SIZE 4
 #define HCI_ACL_PAYLOAD_SIZE (255 + 4)

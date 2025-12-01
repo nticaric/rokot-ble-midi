@@ -86,14 +86,14 @@ int main()
         if (note_on)
         {
           // Send Note On for middle C (C4) with velocity 100
-          int result = rokot_ble_midi_send_note_on(0, MIDI_NOTE_C4, 100);
+          int result = rokot_ble_midi_note_on(0, MIDI_NOTE_C4, 100);
           printf("Note ON:  C4 (note=%d, velocity=100) - %s\n",
                  MIDI_NOTE_C4, result == 0 ? "OK" : "FAILED");
         }
         else
         {
           // Send Note Off
-          int result = rokot_ble_midi_send_note_off(0, MIDI_NOTE_C4, 0);
+          int result = rokot_ble_midi_note_off(0, MIDI_NOTE_C4);
           printf("Note OFF: C4 (note=%d) - %s\n",
                  MIDI_NOTE_C4, result == 0 ? "OK" : "FAILED");
         }
