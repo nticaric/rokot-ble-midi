@@ -3,8 +3,9 @@
 
 cmake_minimum_required(VERSION 3.13)
 
-# Set board BEFORE including SDK
-set(PICO_BOARD pico2_w)
+# Set custom board BEFORE including SDK
+set(PICO_BOARD rokot_board)
+set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/../../boards)
 
 # Include Pico SDK
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
