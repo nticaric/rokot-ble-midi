@@ -1,23 +1,25 @@
 # RokoT BLE-MIDI Library
 
-A Raspberry Pi Pico SDK library for BLE-MIDI (Bluetooth Low Energy MIDI) on RP2350 with Radio Module 2 (RM2).
+A Raspberry Pi Pico SDK library for BLE-MIDI (Bluetooth Low Energy MIDI) on RP2350/RP2040 with CYW43 (Pico W, Pico 2 W, or Radio Module 2).
 
 ## Features
 
 - **BLE-MIDI 1.0 compliant** - Works with macOS, iOS, Windows, Android, and Linux
 - **Low-latency connection** - Configurable 7.5ms connection interval for real-time MIDI
-- **Full MIDI support** - Note On/Off, Control Change, Program Change, Pitch Bend, Channel Pressure, Polyphonic Aftertouch, System Exclusive
+- **Battery Service** - Report battery level to connected host
+- **Device Information Service** - Manufacturer name and firmware version
+- **Full MIDI support** - Note On/Off, Control Change, Program Change, Pitch Bend, Channel Pressure
 - **Configurable SPI clock** - Default 50 MHz for Radio Module 2 compatibility
 - **Simple API** - Easy to integrate into existing projects
 - **Receive callbacks** - Handle incoming MIDI messages from host
 
 ## Hardware Requirements
 
-- **RP2350** (Raspberry Pi Pico 2 or custom board)
-- **Raspberry Pi Radio Module 2** (CYW43439) for WiFi/Bluetooth
+- **RP2350** (Raspberry Pi Pico 2 W) or **RP2040** (Raspberry Pi Pico W)
+- **CYW43439** WiFi/Bluetooth chip (built into Pico W boards, or Radio Module 2)
 - USB connection for power and serial output
 
-### Radio Module 2 GPIO Connections
+### Radio Module 2 GPIO Connections (Custom Boards)
 
 | GPIO | Function |
 |------|----------|
@@ -32,7 +34,7 @@ A Raspberry Pi Pico SDK library for BLE-MIDI (Bluetooth Low Energy MIDI) on RP23
 
 ```bash
 cd your-project
-git submodule add https://github.com/yourusername/rokot-ble-midi.git lib/rokot-ble-midi
+git submodule add https://github.com/nticaric/rokot-ble-midi.git lib/rokot-ble-midi
 ```
 
 ### Option 2: Copy to Your Project
@@ -46,10 +48,15 @@ Copy the `rokot-ble-midi` folder into your project's `lib/` directory.
 ```cmake
 cmake_minimum_required(VERSION 3.13)
 
+# Set board BEFORE including SDK (pico_w, pico2_w, etc.)
+set(PICO_BOARD pico2_w)
+
 # Include Pico SDK
-include(pico_sdk_import.cmake)
+include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
 project(my_ble_midi_project C CXX ASM)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 
 # Initialize the SDK
 pico_sdk_init()
@@ -98,8 +105,8 @@ int main() {
         // Run the BLE-MIDI background task
         rokot_ble_midi_task();
         
-        // Only send MIDI when connected
-        if (rokot_ble_midi_is_connected()) {
+        // Only send MIDI when ready (connected + notifications enabled)
+        if (rokot_ble_midi_is_ready()) {
             uint32_t now = to_ms_since_boot(get_absolute_time());
             
             // Toggle note every second
@@ -108,10 +115,10 @@ int main() {
                 note_on = !note_on;
                 
                 if (note_on) {
-                    rokot_ble_midi_send_note_on(0, MIDI_NOTE_C4, 100);
+                    rokot_ble_midi_note_on(0, MIDI_NOTE_C4, 100);
                     printf("Note ON: C4\n");
                 } else {
-                    rokot_ble_midi_send_note_off(0, MIDI_NOTE_C4, 0);
+                    rokot_ble_midi_note_off(0, MIDI_NOTE_C4);
                     printf("Note OFF: C4\n");
                 }
             }
@@ -122,17 +129,44 @@ int main() {
 }
 ```
 
+### Battery Level Example
+
+```c
+#include "rokot_ble_midi.h"
+
+int main() {
+    stdio_init_all();
+    
+    rokot_ble_midi_init("Battery MIDI");
+    
+    // Set initial battery level
+    rokot_ble_midi_set_battery_level(75);
+    
+    while (true) {
+        rokot_ble_midi_task();
+        
+        // Update battery level periodically
+        // (in real use, read from ADC)
+        uint8_t level = read_battery_adc();  // Your function
+        rokot_ble_midi_set_battery_level(level);
+    }
+}
+```
+
 ### Receiving MIDI Messages
 
 ```c
 #include "rokot_ble_midi.h"
 
 // Callback for incoming MIDI data
-void my_midi_receive_callback(const uint8_t *data, uint16_t length) {
-    // Skip BLE-MIDI header/timestamp bytes
-    // Parse MIDI messages from data
-    for (int i = 0; i < length; i++) {
-        printf("MIDI byte: 0x%02X\n", data[i]);
+void midi_callback(uint8_t status, uint8_t data1, uint8_t data2) {
+    uint8_t type = status & 0xF0;
+    uint8_t channel = status & 0x0F;
+    
+    if (type == MIDI_NOTE_ON) {
+        printf("Note ON: ch=%d note=%d vel=%d\n", channel, data1, data2);
+    } else if (type == MIDI_NOTE_OFF) {
+        printf("Note OFF: ch=%d note=%d\n", channel, data1);
     }
 }
 
@@ -140,9 +174,7 @@ int main() {
     stdio_init_all();
     
     rokot_ble_midi_init("My MIDI Device");
-    
-    // Register receive callback
-    rokot_ble_midi_set_receive_callback(my_midi_receive_callback);
+    rokot_ble_midi_set_callback(midi_callback);
     
     while (true) {
         rokot_ble_midi_task();
@@ -157,7 +189,12 @@ int main() {
 ```c
 int rokot_ble_midi_init(const char *device_name);
 ```
-Initialize BLE-MIDI with the specified device name (max 14 characters recommended for advertising).
+Initialize BLE-MIDI with the specified device name (max 29 characters).
+
+```c
+void rokot_ble_midi_deinit(void);
+```
+Shutdown BLE-MIDI and release resources.
 
 ```c
 void rokot_ble_midi_task(void);
@@ -171,58 +208,82 @@ bool rokot_ble_midi_is_connected(void);
 ```
 Returns `true` if a BLE host is connected.
 
+```c
+bool rokot_ble_midi_is_ready(void);
+```
+Returns `true` if connected AND notifications are enabled (ready to send MIDI).
+
+```c
+rokot_ble_midi_state_t rokot_ble_midi_get_state(void);
+```
+Returns `ROKOT_BLE_MIDI_DISCONNECTED`, `ROKOT_BLE_MIDI_CONNECTED`, or `ROKOT_BLE_MIDI_READY`.
+
+```c
+float rokot_ble_midi_get_connection_interval(void);
+```
+Returns the current connection interval in milliseconds.
+
+### Device Information
+
+```c
+void rokot_ble_midi_set_manufacturer(const char *manufacturer);
+void rokot_ble_midi_set_firmware_version(const char *version);
+```
+Set device information (call before `rokot_ble_midi_init()` to override defaults).
+
+### Battery Service
+
+```c
+void rokot_ble_midi_set_battery_level(uint8_t level);
+uint8_t rokot_ble_midi_get_battery_level(void);
+```
+Set/get battery level (0-100%). Automatically notifies connected host when level changes.
+
 ### Sending MIDI Messages
 
 ```c
-int rokot_ble_midi_send_note_on(uint8_t channel, uint8_t note, uint8_t velocity);
-int rokot_ble_midi_send_note_off(uint8_t channel, uint8_t note, uint8_t velocity);
-int rokot_ble_midi_send_control_change(uint8_t channel, uint8_t controller, uint8_t value);
-int rokot_ble_midi_send_program_change(uint8_t channel, uint8_t program);
-int rokot_ble_midi_send_pitch_bend(uint8_t channel, uint16_t value);
-int rokot_ble_midi_send_channel_pressure(uint8_t channel, uint8_t pressure);
-int rokot_ble_midi_send_poly_aftertouch(uint8_t channel, uint8_t note, uint8_t pressure);
-int rokot_ble_midi_send_raw(const uint8_t *data, uint16_t length);
+int rokot_ble_midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity);
+int rokot_ble_midi_note_off(uint8_t channel, uint8_t note);
+int rokot_ble_midi_control_change(uint8_t channel, uint8_t controller, uint8_t value);
+int rokot_ble_midi_program_change(uint8_t channel, uint8_t program);
+int rokot_ble_midi_pitch_bend(uint8_t channel, int16_t value);  // -8192 to +8191
+int rokot_ble_midi_channel_pressure(uint8_t channel, uint8_t pressure);
+int rokot_ble_midi_send_raw(const uint8_t *data, uint8_t len);
 ```
-All send functions return `0` on success, `-1` on error.
+All send functions return `0` on success, negative on error.
 
 ### Receiving MIDI
 
 ```c
-typedef void (*rokot_ble_midi_receive_callback_t)(const uint8_t *data, uint16_t length);
-void rokot_ble_midi_set_receive_callback(rokot_ble_midi_receive_callback_t callback);
+typedef void (*rokot_ble_midi_callback_t)(uint8_t status, uint8_t data1, uint8_t data2);
+void rokot_ble_midi_set_callback(rokot_ble_midi_callback_t callback);
 ```
-Set a callback to receive incoming MIDI data from the host.
+Set a callback to receive incoming MIDI messages from the host.
 
 ### MIDI Constants
 
 ```c
-// MIDI Note Numbers
-MIDI_NOTE_C0  ... MIDI_NOTE_B0   // Octave 0 (C0 = 12)
-MIDI_NOTE_C1  ... MIDI_NOTE_B1   // Octave 1
-...
-MIDI_NOTE_C4  ... MIDI_NOTE_B4   // Middle C octave (C4 = 60)
-...
-MIDI_NOTE_C8  ... MIDI_NOTE_G8   // Octave 8
+// Message types
+MIDI_NOTE_OFF, MIDI_NOTE_ON, MIDI_POLY_PRESSURE, MIDI_CONTROL_CHANGE,
+MIDI_PROGRAM_CHANGE, MIDI_CHANNEL_PRESSURE, MIDI_PITCH_BEND
 
-// Common Control Change Numbers
-MIDI_CC_MOD_WHEEL      // 1
-MIDI_CC_VOLUME         // 7
-MIDI_CC_PAN            // 10
-MIDI_CC_EXPRESSION     // 11
-MIDI_CC_SUSTAIN        // 64
-MIDI_CC_ALL_NOTES_OFF  // 123
+// Common Control Change numbers
+MIDI_CC_MOD_WHEEL, MIDI_CC_VOLUME, MIDI_CC_PAN, MIDI_CC_EXPRESSION,
+MIDI_CC_SUSTAIN, MIDI_CC_ALL_NOTES_OFF
+
+// Note numbers (Middle C octave)
+MIDI_NOTE_C4, MIDI_NOTE_CS4, MIDI_NOTE_D4, ... MIDI_NOTE_B4
 ```
 
 ## Configuration
 
-### SPI Clock Divider
+### SPI Clock Divider (Custom Boards)
 
-The default SPI clock divider is 3 (50 MHz), which is required for Radio Module 2. To change it:
+The default SPI clock is 50 MHz (divider 3). For standard Pico W, you can use 75 MHz:
 
 ```cmake
 # In your CMakeLists.txt, before add_subdirectory:
-set(ROKOT_BLE_MIDI_SPI_CLK_DIV 2)  # 75 MHz for Pico W
-add_subdirectory(lib/rokot-ble-midi)
+add_compile_definitions(CYW43_PIO_CLOCK_DIV_INT=2)  # 75 MHz for Pico W
 ```
 
 | Divider | Clock Speed | Use Case |
@@ -241,17 +302,25 @@ Define these before including the header to customize connection parameters:
 #include "rokot_ble_midi.h"
 ```
 
-Lower intervals = lower latency but higher power consumption.
+### Device Information Defaults
+
+```c
+#define ROKOT_BLE_MIDI_MANUFACTURER "RokoT"
+#define ROKOT_BLE_MIDI_FIRMWARE_VERSION "1.0.0"
+```
+
+## Building and Flashing
+
+```bash
+mkdir build && cd build
+cmake -G Ninja ..
+ninja
+picotool load my_ble_midi_app.uf2 -fx
+```
 
 ## Testing on macOS
 
-1. Build and flash your firmware:
-   ```bash
-   cd build
-   cmake -G Ninja ..
-   ninja my_ble_midi_app
-   picotool load my_ble_midi_app.elf -fx
-   ```
+1. Build and flash your firmware
 
 2. Open **Audio MIDI Setup** (in /Applications/Utilities)
 
@@ -274,20 +343,15 @@ screen /dev/tty.usbmodem* 115200
 
 To exit screen: `Ctrl+A` then `K`, then `Y`
 
-## BLE-MIDI Packet Format
+## BLE Services
 
-BLE-MIDI uses a specific packet format:
+The library provides these BLE services:
 
-```
-[Header] [Timestamp] [MIDI Status] [Data1] [Data2]
-  0x80     0x80        0x90        0x3C    0x64
-```
-
-- **Header byte**: Bit 7 = 1, bits 5-0 = timestamp high 6 bits
-- **Timestamp byte**: Bit 7 = 1, bits 6-0 = timestamp low 7 bits
-- **MIDI data**: Standard MIDI message bytes
-
-The library handles this encoding/decoding automatically.
+| Service | UUID | Description |
+|---------|------|-------------|
+| Device Information | 0x180A | Manufacturer, Firmware Version |
+| Battery Service | 0x180F | Battery level (0-100%) |
+| BLE-MIDI | 03B80E5A-EDE8-4B33-A751-6CE34EC4C700 | MIDI data |
 
 ## Troubleshooting
 
@@ -296,25 +360,22 @@ The library handles this encoding/decoding automatically.
 - Ensure the device is powered and running
 - Check serial output for "BLE-MIDI started" message
 - Try restarting Bluetooth on your computer
-- Device name appears in scan response, service UUID in advertising data
 
 ### "hdr mismatch" errors on custom board
 
 - Your SPI clock is too fast
-- Use `set(ROKOT_BLE_MIDI_SPI_CLK_DIV 3)` for 50 MHz
+- Use `CYW43_PIO_CLOCK_DIV_INT=3` for 50 MHz
 - Try divider 4 if issues persist
 
 ### Connected but no sound
 
-- Make sure a DAW (GarageBand, Logic, Ableton, etc.) is open
-- Select the BLE-MIDI device as MIDI input in your DAW
-- Ensure a software instrument track is selected
-- Check that the MIDI channel matches (default: channel 0)
+- Make sure a DAW is open with a software instrument
+- Check that MIDI channel matches (default: channel 0)
+- Use `rokot_ble_midi_is_ready()` not just `is_connected()`
 
 ### High latency
 
-- Request lower connection interval in code
-- Check that the host supports low-latency connections
+- Request lower connection interval
 - macOS typically negotiates 15-30ms even when 7.5ms is requested
 
 ## License
