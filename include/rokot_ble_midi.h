@@ -43,6 +43,7 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 typedef void (*rokot_ble_midi_callback_t)(uint8_t status, uint8_t data1, uint8_t data2);
+typedef void (*rokot_ble_midi_raw_callback_t)(const uint8_t *data, uint16_t len);
 
 typedef enum {
   ROKOT_BLE_MIDI_DISCONNECTED = 0,
@@ -96,13 +97,14 @@ int rokot_ble_midi_control_change(uint8_t channel, uint8_t controller, uint8_t v
 int rokot_ble_midi_program_change(uint8_t channel, uint8_t program);
 int rokot_ble_midi_pitch_bend(uint8_t channel, int16_t value);
 int rokot_ble_midi_channel_pressure(uint8_t channel, uint8_t pressure);
-int rokot_ble_midi_send_raw(const uint8_t *data, uint8_t len);
+int rokot_ble_midi_send_raw(const uint8_t *data, uint16_t len);
 
 // ---------------------------------------------------------------------------
 // Receiving MIDI Messages
 // ---------------------------------------------------------------------------
 
 void rokot_ble_midi_set_callback(rokot_ble_midi_callback_t callback);
+void rokot_ble_midi_set_raw_callback(rokot_ble_midi_raw_callback_t callback);
 
 // ---------------------------------------------------------------------------
 // MIDI Constants
